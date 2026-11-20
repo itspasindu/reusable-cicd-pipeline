@@ -20,7 +20,6 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-test.yml
-    secrets: inherit
 
   security:
     name: Security Full Stack
@@ -28,7 +27,6 @@ jobs:
       contents: read
       security-events: write
     uses: ./.github/workflows/reusable-security.yml
-    secrets: inherit
 
   release:
     name: Package Release
@@ -40,7 +38,6 @@ jobs:
       contents: read
       actions: read
     uses: ./.github/workflows/reusable-release.yml
-    secrets: inherit
 
   failure-ticket:
     name: Create Failure Ticket

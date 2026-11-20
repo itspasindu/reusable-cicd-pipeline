@@ -76,6 +76,7 @@ jobs:
     if: needs.resolve-choice.outputs.mode == 'auto'
     permissions:
       contents: write
+      pull-requests: write
       issues: write
     steps:
       - name: Checkout main
@@ -83,7 +84,7 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4.3.0
@@ -101,17 +102,24 @@ jobs:
           npx eslint server/src server/tests --ext js --fix || true
           npx prettier --write "server/**/*.{js,json,sql}" || true
 
-      - name: Commit and push auto-fixes
+      - name: Open pull request for auto-fixes
         id: commit
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if [ -n "$(git status --porcelain)" ]; then
-            git add -A
+          if ! git diff --quiet HEAD --; then
+            branch="ci/auto-fix-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            git switch -c "$branch"
+            git add -u
             git commit -m "chore(ci): auto-fix lint/format after developer approval"
-            git push origin main
+            gh auth setup-git
+            git push origin "HEAD:refs/heads/$branch"
+            pr_url="$(gh pr create --base main --head "$branch" --title "Apply CI formatting fixes" --body "Automated lint and formatting changes for review. Merge after required checks pass.")"
+            echo "pr_url=$pr_url" >> "$GITHUB_OUTPUT"
             echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "Auto-fix committed and pushed to main."
+            echo "Opened $pr_url"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "No auto-fix changes were available to commit."
@@ -122,18 +130,18 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ISSUE: ${{ needs.resolve-choice.outputs.issue_number }}
+          PR_URL: ${{ steps.commit.outputs.pr_url }}
           CHANGED: ${{ steps.commit.outputs.changed }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          gh label create "fix/auto-applied" --color "0E8A16" --description "Auto-fix was applied by CI" 2>/dev/null || true
+          gh label create "fix/auto-proposed" --color "0E8A16" --description "CI proposed a formatting fix" 2>/dev/null || true
           if [ "$CHANGED" = "true" ]; then
+            gh issue edit "$ISSUE" --add-label "fix/auto-proposed"
             BODY="### Developer chose **auto fix**
 
-          Lint/format auto-fix was applied and pushed to \`main\` (dependency upgrades are **not** auto-applied).
-
+          Review the proposed changes at ${PR_URL}.
           - Fix run: ${RUN_URL}
-          - A new CI pipeline should start from the auto-fix commit.
-          - Close this issue once \`main\` is green."
+          - Close this issue after the PR passes CI and is merged."
           else
             BODY="### Developer chose **auto fix**
 
@@ -145,7 +153,6 @@ jobs:
           fi
           gh issue comment "$ISSUE" --repo "${{ github.repository }}" --body "$BODY"
           gh issue edit "$ISSUE" --repo "${{ github.repository }}" \
-            --add-label "fix/auto-applied" \
             --remove-label "fix/auto" \
             --remove-label "needs-triage" || true
 
@@ -179,7 +186,7 @@ jobs:
           2. Reproduce web checks with \`npm run lint\`, \`npm run format:check\`, and \`npm audit --audit-level=high\`
           3. Reproduce API checks with \`cd server && npm ci && npm run lint && npm test && npm audit --audit-level=high\`
           4. Apply and verify the fix locally (dependency changes via reviewed PR — never silent \`npm audit fix\` in CI)
-          5. Push to \`main\` (or open a PR into \`main\`)
+          5. Open a pull request into main.
           6. Confirm CI and CD are green, then close the failure issue
 
           Approval run: ${RUN_URL}"
